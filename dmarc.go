@@ -9,8 +9,9 @@ import (
 func main() {
 
 	type DateRange struct {
-		Begin int `xml:"begin"`
-		End   int `xml:"end"`
+		// TODO: should be int but Y! trailing spaces
+		Begin string `xml:"begin"`
+		End   string `xml:"end"`
 	}
 
 	type ReportMetadata struct {
@@ -71,7 +72,7 @@ func main() {
 		Record          []Record        `xml:"record"`
 	}
 
-	xmlFile, err := os.Open("/Users/gcolburn/go/src/github.com/gc1code/dmarcparser/samples/google.xml") // For read access.
+	xmlFile, err := os.Open("/Users/gcolburn/go/src/github.com/gc1code/dmarcparser/samples/yahoo.xml") // For read access.
 	if err != nil {
 		fmt.Printf("os error: %v", err)
 		return
@@ -90,9 +91,12 @@ func main() {
 		case xml.StartElement:
 			inElement = se.Name.Local
 			if inElement == "feedback" {
-				var f FeedbackReport
+				f := FeedbackReport{}
 
-				decoder.DecodeElement(&f, &se)
+				xmlerr := decoder.DecodeElement(&f, &se)
+				if xmlerr != nil {
+					fmt.Printf("decode error: %v", xmlerr)
+				}
 				fmt.Printf("XMLName: %#v\n", f)
 			}
 		default:
