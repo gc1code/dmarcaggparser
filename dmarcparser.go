@@ -1,9 +1,9 @@
-package main
+package dmarcaggparser
 
 import (
 	"flag"
 	"fmt"
-	"github.com/gc1code/dmarcparser/dmarc"
+	"dmarc"
 	"os"
 )
 
