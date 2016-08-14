@@ -1,9 +1,9 @@
 package dmarcaggparser
 
 import (
+	"dmarc"
 	"flag"
 	"fmt"
-	"dmarc"
 	"os"
 )
 

@@ -3,12 +3,44 @@ package dmarc
 import (
 	"encoding/xml"
 	"io"
+	"fmt"
+	"time"
+	"strconv"
+	"strings"
+	"net"
 )
 
+const AuthResultType_DKIM = "dkim"
+const AuthResultType_SPF  = "spf"
+
+
 type DateRange struct {
-	// TODO: should be int but Y! trailing spaces
-	Begin string `xml:"begin"`
-	End   string `xml:"end"`
+	Begin time.Time
+	End   time.Time
+}
+
+// Unmarshal the DateRange element into time.Time objects.
+// Yahoo tends to put some extra whitespace behind its
+// timestamps, so we trim that first.
+func (dr *DateRange) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	rangeStr := struct {
+		Begin string `xml:"begin"`
+		End   string `xml:"end"`
+	}{}
+	d.DecodeElement(&rangeStr, &start)
+
+	begin, err := strconv.Atoi(strings.TrimSpace(rangeStr.Begin))
+	if err != nil {
+		return err
+	}
+	end, err := strconv.Atoi(strings.TrimSpace(rangeStr.End))
+	if err != nil {
+		return err
+	}
+
+	dr.Begin = time.Unix(int64(begin), 0).UTC()
+	dr.End = time.Unix(int64(end), 0).UTC()
+	return nil
 }
 
 type ReportMetadata struct {
@@ -35,10 +67,27 @@ type PolicyEvaluated struct {
 }
 
 type Row struct {
-	// TODO: Figure out how to cast this to an IP
-	SourceIp        string          `xml:"source_ip"`
+	SourceIp        net.IP
 	Count           int             `xml:"count"`
 	PolicyEvaluated PolicyEvaluated `xml:"policy_evaluated"`
+}
+
+func (r *Row) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	rowAlias := struct {
+		SourceIp        string          `xml:"source_ip"`
+		Count           int             `xml:"count"`
+		PolicyEvaluated PolicyEvaluated `xml:"policy_evaluated"`
+	}{}
+	d.DecodeElement(&rowAlias, &start)
+
+	r.Count = rowAlias.Count
+	r.PolicyEvaluated = rowAlias.PolicyEvaluated
+	r.SourceIp = net.ParseIP(rowAlias.SourceIp)
+	if r.SourceIp == nil {
+		return fmt.Errorf("Could not parse source_ip")
+	}
+
+	return nil
 }
 
 type Identifiers struct {
@@ -46,10 +95,28 @@ type Identifiers struct {
 }
 
 type AuthResult struct {
-	// FIXME: this could be either DKIM or SPF
-	XMLName xml.Name
+	Type    string // Either SPF or DKIM
 	Domain  string `xml:"domain"`
 	Result  string `xml:"result"`
+}
+
+func (ar *AuthResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	res := struct {
+		XMLName xml.Name
+		Domain  string `xml:"domain"`
+		Result  string `xml:"result"`
+	}{}
+	d.DecodeElement(&res, &start)
+
+	ar.Domain = res.Domain
+	ar.Result = res.Result
+
+	if res.XMLName.Local != AuthResultType_DKIM && res.XMLName.Local != AuthResultType_SPF {
+		return fmt.Errorf("Unrecognized AuthResult type: %s", res.XMLName.Local)
+	}
+
+	ar.Type = res.XMLName.Local
+	return nil
 }
 
 type AuthResults struct {
@@ -63,36 +130,39 @@ type Record struct {
 }
 
 type FeedbackReport struct {
-	XMLName         xml.Name        `xml:"feedback"`
-	ReportMetadata  ReportMetadata  `xml:"report_metadata"`
+	Metadata        ReportMetadata  `xml:"report_metadata"`
 	PolicyPublished PolicyPublished `xml:"policy_published"`
 	Record          []Record        `xml:"record"`
 }
 
-func ParseReader(xmlFileReader io.Reader) FeedbackReport {
-	var f FeedbackReport
+func ParseReader(xmlFileReader io.Reader) (*FeedbackReport, error) {
+	var f *FeedbackReport
 
 	decoder := xml.NewDecoder(xmlFileReader)
 	var inElement string
 
 	for {
-		t, _ := decoder.Token()
+		t, err := decoder.Token()
+		if t == nil && err == io.EOF {
+			break;
+		}
 		if t == nil {
-			break
+			return nil, err
 		}
 		switch se := t.(type) {
 		case xml.StartElement:
 			inElement = se.Name.Local
 			if inElement == "feedback" {
-				decoder.DecodeElement(&f, &se)
-				//				xmlerr := decoder.DecodeElement(&f, &se)
-				//				if xmlerr != nil {
-				//					fmt.Printf("decode error: %v\n", xmlerr)
-				//				}
-				//				fmt.Printf("XMLName: %#v\n", f)
+				err := decoder.DecodeElement(&f, &se)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, fmt.Errorf("Unknown root element: %s", inElement)
 			}
 		default:
 		}
 	}
-	return f
+
+	return f, nil
 }
